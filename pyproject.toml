@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skywork-prm-vllm-plugin"
+version = "0.1.0"
+description = "vLLM plugin for Skywork-o1-Open-PRM"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0"}
+
+dependencies = [
+    "vllm>=0.13.0",
+]
+
+[project.entry-points."vllm.general_plugins"]
+register_skywork_prm = "skywork_prm_model:register_skywork_prm_model"
+
+[tool.setuptools]
+py-modules = ["skywork_prm_model", "skywork_utils"]

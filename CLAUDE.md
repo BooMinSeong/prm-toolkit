@@ -1,0 +1,82 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+This is a test project for vLLM reward model inference, specifically exploring process reward models (PRM) for evaluating mathematical reasoning steps:
+- **Qwen2.5-Math-PRM-7B**: Process reward model for math reasoning
+- **Skywork-o1-Open-PRM-Qwen-2.5-1.5B**: Skywork's open-source PRM (with vLLM 0.13.0 compatibility fix)
+
+## Setup
+
+**IMPORTANT: Install the vLLM plugin first (required for Skywork-o1-Open-PRM):**
+
+```bash
+source .venv/bin/activate
+pip install -e .  # Registers SkyworkQwen2ForPrmModel with vLLM
+```
+
+## Running the Scripts
+
+```bash
+source .venv/bin/activate
+
+# Basic reward model tests
+python reward.py           # Basic reward model test with simple prompts
+python reward_qwen_prm.py  # Math step evaluation with Qwen PRM format
+
+# Skywork-o1-Open-PRM (two options)
+# Option A: Direct execution
+python reward_skywork_o1_prm.py
+
+# Option B: Server/client mode
+# Terminal 1: Start server
+python start_reward_server.py
+# Terminal 2: Run client
+python reward_skywork_server.py
+```
+
+All scripts accept vLLM engine arguments via CLI (e.g., `--model`, `--max-model-len`, `--tensor-parallel-size`).
+
+## Architecture
+
+- **reward.py**: Basic vLLM pooling/reward model example using simple text prompts
+- **reward_qwen_prm.py**: Specialized script for Qwen2.5-Math-PRM format, demonstrating step-by-step math reasoning evaluation with `<extra_0>` step delimiters and `<im_start>`/`<im_end>` chat template markers
+- **reward_skywork_o1_prm.py**: Skywork-o1-Open-PRM direct execution script
+- **start_reward_server.py**: Helper script to start vLLM server with Skywork-o1-Open-PRM
+- **reward_skywork_server.py**: Client script for server/client mode using OpenAI-compatible API
+- **skywork_prm_model.py**: Custom `SkyworkQwen2ForPrmModel` implementation (vLLM plugin)
+- **pyproject.toml**: Package configuration with vLLM plugin entry point
+
+All scripts use vLLM's `LLM.reward()` API with `runner="pooling"` configuration for reward model inference.
+
+## vLLM 0.13.0 Compatibility
+
+Skywork-o1-Open-PRM uses `Qwen2ForPrmModel` architecture with a `v_head` parameter structure that differs from vLLM's standard `Qwen2ForProcessRewardModel`. This repository provides a custom model implementation (`skywork_prm_model.py`) that:
+
+- Implements Skywork's exact architecture (ValueHead with `v_head` parameters)
+- Uses vLLM 0.13.0's native APIs (Pooler, DispatchPooler)
+- Supports STEP pooling for process-level rewards
+- Registers `SkyworkQwen2ForPrmModel` with vLLM's ModelRegistry
+
+### vLLM Plugin System
+
+The custom model is registered using vLLM's official plugin system via `pyproject.toml`:
+
+```toml
+[project.entry-points."vllm.general_plugins"]
+register_skywork_prm = "skywork_prm_model:register_skywork_prm_model"
+```
+
+**Installation:**
+```bash
+pip install -e .
+```
+
+This automatically registers the model when vLLM starts. You should see:
+```
+✓ Registered SkyworkQwen2ForPrmModel (Qwen2ForPrmModel) for Skywork-o1-Open-PRM
+```
+
+See `IMPLEMENTATION_SUMMARY_V2.md` for technical details.
