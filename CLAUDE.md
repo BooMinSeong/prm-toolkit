@@ -19,6 +19,28 @@ pip install -e .  # Registers SkyworkQwen2ForPrmModel with vLLM
 
 ## Running the Scripts
 
+### Unified PRM Server (Recommended)
+
+```bash
+source .venv/bin/activate
+
+# Qwen PRM example
+# Terminal 1: Start Qwen PRM server
+vllm serve Qwen/Qwen2.5-Math-PRM-7B --port 8080 --trust-remote-code
+
+# Terminal 2: Run example
+python example_prm_usage.py --model qwen
+
+# Skywork PRM example
+# Terminal 1: Start Skywork PRM server
+python start_reward_server.py
+
+# Terminal 2: Run example
+python example_prm_usage.py --model skywork
+```
+
+### Legacy Scripts
+
 ```bash
 source .venv/bin/activate
 
@@ -41,15 +63,57 @@ All scripts accept vLLM engine arguments via CLI (e.g., `--model`, `--max-model-
 
 ## Architecture
 
+### Unified PRM Server (Recommended)
+
+**NEW**: Unified server-based architecture for all PRM models:
+
+- **prm_server.py**: Main module with unified PRM interface
+  - `PrmConfig`: Dataclass for type-safe configuration
+  - `PrmServer`: Abstract base class with `score(prompt, response)` API
+  - `QwenPrmServer`: Qwen2.5-Math-PRM implementation
+  - `SkyworkPrmServer`: Skywork-o1-Open-PRM implementation
+  - `create_prm_server()`: Factory function for model instantiation
+
+- **example_prm_usage.py**: Demonstration script showing usage with both models
+
+**Usage pattern:**
+```python
+from prm_server import PrmConfig, create_prm_server
+
+# Create configuration
+config = PrmConfig(
+    model="Qwen/Qwen2.5-Math-PRM-7B",
+    base_url="http://localhost:8080"
+)
+
+# Create PRM server and score
+prm = create_prm_server(config)
+rewards = prm.score(prompt="...", response="...")
+```
+
+**Key features:**
+- Server-only access (no local LLM.reward() calls)
+- Model-specific preprocessing and postprocessing
+- Unified interface across different PRM models
+- Type-safe configuration with dataclass
+
+**Model-specific details:**
+- **Qwen**: Uses `\n\n` (double newline) as step delimiter, `<extra_0>` tokens, returns `[neg_prob, pos_prob]` pairs
+- **Skywork**: Uses `\n` (single newline) as step delimiter, reward_flags for step positions, sigmoid normalization
+
+### Legacy Scripts (Reference)
+
 - **reward.py**: Basic vLLM pooling/reward model example using simple text prompts
 - **reward_qwen_prm.py**: Specialized script for Qwen2.5-Math-PRM format, demonstrating step-by-step math reasoning evaluation with `<extra_0>` step delimiters and `<im_start>`/`<im_end>` chat template markers
+- **reward_qwen_prm_server.py**: Qwen PRM server mode (reference for QwenPrmServer implementation)
 - **reward_skywork_o1_prm.py**: Skywork-o1-Open-PRM direct execution script
 - **start_reward_server.py**: Helper script to start vLLM server with Skywork-o1-Open-PRM
 - **reward_skywork_server.py**: Client script for server/client mode using OpenAI-compatible API
 - **skywork_prm_model.py**: Custom `SkyworkQwen2ForPrmModel` implementation (vLLM plugin)
+- **skywork_utils.py**: Utility functions (prepare_input, sigmoid) - integrated into SkyworkPrmServer
 - **pyproject.toml**: Package configuration with vLLM plugin entry point
 
-All scripts use vLLM's `LLM.reward()` API with `runner="pooling"` configuration for reward model inference.
+Legacy scripts use vLLM's `LLM.reward()` API or direct server calls. **Use the unified PRM server for new code.**
 
 ## vLLM 0.14.1 Compatibility
 
@@ -86,3 +150,75 @@ This automatically registers the model when vLLM starts. You should see:
 ```
 
 See `IMPLEMENTATION_SUMMARY_V2.md` for technical details.
+
+## Migration Guide
+
+### From Legacy Scripts to Unified PRM Server
+
+**Old approach (reward_qwen_prm_server.py):**
+```python
+# Manual request handling
+prompts, steps_list = math_step_prompts()
+pooling_response = requests.post(
+    f"{base_url}/pooling",
+    json={"input": prompts},
+    ...
+)
+rewards_raw = pooling_response.json()["data"][0]["data"]
+rewards = [r[1] for r in rewards_raw]  # Extract positive probability
+```
+
+**New approach (unified prm_server.py):**
+```python
+from prm_server import PrmConfig, create_prm_server
+
+config = PrmConfig(
+    model="Qwen/Qwen2.5-Math-PRM-7B",
+    base_url="http://localhost:8080"
+)
+prm = create_prm_server(config)
+rewards = prm.score(prompt="...", response="...")
+```
+
+**Benefits:**
+- Single line to score responses
+- Automatic preprocessing (step splitting, formatting)
+- Automatic postprocessing (reward extraction, normalization)
+- Type-safe configuration
+- Model-agnostic interface
+
+### Step Delimiter Differences
+
+**Qwen PRM:**
+- Input: Steps separated by `\n\n` (double newline)
+- Internal: Converted to `<extra_0>` tokens
+- Output: Positive probability from `[neg_prob, pos_prob]` pairs
+
+**Skywork PRM:**
+- Input: Steps separated by `\n` (single newline)
+- Internal: Tokenized with reward_flags marking step positions
+- Output: Sigmoid-normalized rewards [0, 1]
+
+### Starting Servers
+
+**Qwen PRM Server:**
+```bash
+vllm serve Qwen/Qwen2.5-Math-PRM-7B \
+    --port 8080 \
+    --trust-remote-code \
+    --tensor-parallel-size 1 \
+    --gpu-memory-utilization 0.9
+```
+
+**Skywork PRM Server:**
+```bash
+# Requires vLLM plugin installation first: pip install -e .
+python start_reward_server.py
+
+# Or manually:
+vllm serve Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B \
+    --port 8081 \
+    --trust-remote-code \
+    --tensor-parallel-size 1 \
+    --gpu-memory-utilization 0.9
+```
