@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# Server startup script for Skywork-o1-Open-PRM with vLLM 0.13.0
+# Server startup script for Skywork-o1-Open-PRM with vLLM 0.14.1
 #
 # Prerequisites:
 #   pip install -e .  # Install the vLLM plugin for Skywork PRM

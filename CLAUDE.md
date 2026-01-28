@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a test project for vLLM reward model inference, specifically exploring process reward models (PRM) for evaluating mathematical reasoning steps:
 - **Qwen2.5-Math-PRM-7B**: Process reward model for math reasoning
-- **Skywork-o1-Open-PRM-Qwen-2.5-1.5B**: Skywork's open-source PRM (with vLLM 0.13.0 compatibility fix)
+- **Skywork-o1-Open-PRM-Qwen-2.5-1.5B**: Skywork's open-source PRM (with vLLM 0.14.1 compatibility fix)
 
 ## Setup
 
@@ -51,14 +51,20 @@ All scripts accept vLLM engine arguments via CLI (e.g., `--model`, `--max-model-
 
 All scripts use vLLM's `LLM.reward()` API with `runner="pooling"` configuration for reward model inference.
 
-## vLLM 0.13.0 Compatibility
+## vLLM 0.14.1 Compatibility
 
 Skywork-o1-Open-PRM uses `Qwen2ForPrmModel` architecture with a `v_head` parameter structure that differs from vLLM's standard `Qwen2ForProcessRewardModel`. This repository provides a custom model implementation (`skywork_prm_model.py`) that:
 
 - Implements Skywork's exact architecture (ValueHead with `v_head` parameters)
-- Uses vLLM 0.13.0's native APIs (Pooler, DispatchPooler)
+- Uses vLLM 0.14.1's native APIs (Pooler, DispatchPooler)
 - Supports STEP pooling for process-level rewards
 - Registers `SkyworkQwen2ForPrmModel` with vLLM's ModelRegistry
+
+### vLLM 0.14+ Notes
+
+- **Async Scheduling**: Enabled by default in v0.14.0. If issues occur, disable with `--disable-async-output-proc`
+- **PyTorch Requirement**: v2.5.0+ required
+- **Plugin System**: No changes to entry point registration
 
 ### vLLM Plugin System
 

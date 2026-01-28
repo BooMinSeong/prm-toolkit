@@ -3,14 +3,14 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "skywork-prm-vllm-plugin"
+name = "prm-toolkit"
 version = "0.1.0"
 description = "vLLM plugin for Skywork-o1-Open-PRM"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 
 dependencies = [
-    "vllm>=0.13.0",
+    "vllm==0.14.1",
 ]
 
 [project.entry-points."vllm.general_plugins"]

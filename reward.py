@@ -12,7 +12,7 @@ def parse_args():
     parser = EngineArgs.add_cli_args(parser)
     # Set example specific arguments
     parser.set_defaults(
-        model="Qwen/Qwen2.5-Math-PRM-7B"
+        model="internlm/internlm2-1_8b-reward",
         runner="pooling",
         enforce_eager=True,
         max_model_len=1024,

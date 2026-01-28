@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """
 Custom Qwen2ForPrmModel implementation for Skywork-o1-Open-PRM
-Compatible with vLLM 0.13.0
+Compatible with vLLM 0.14.1
 
 This module provides a custom implementation that bridges Skywork's model architecture
-with vLLM 0.13.0's API, specifically handling the v_head parameter structure.
+with vLLM 0.14.1's API, specifically handling the v_head parameter structure.
 """
 
 from collections.abc import Iterable
@@ -15,7 +15,8 @@ import torch
 from torch import nn
 
 from vllm.config import VllmConfig
-from vllm.model_executor.layers.pooler import DispatchPooler, Pooler
+from vllm.model_executor.layers.pooler import Pooler
+from vllm.model_executor.layers.pooler.tokwise import pooler_for_token_classify
 from vllm.sequence import IntermediateTensors
 
 from vllm.model_executor.models.interfaces import SupportsLoRA, SupportsPP
@@ -60,7 +61,7 @@ class ValueHead(nn.Module):
         return output
 
 
-@default_pooling_type("STEP")
+@default_pooling_type(tok_pooling_type="STEP")
 class SkyworkQwen2ForPrmModel(nn.Module, SupportsLoRA, SupportsPP):
     """
     Skywork-specific Process Reward Model implementation.
@@ -110,9 +111,7 @@ class SkyworkQwen2ForPrmModel(nn.Module, SupportsLoRA, SupportsPP):
         # Set up pooler for STEP pooling (same as Qwen2ForProcessRewardModel)
         assert pooler_config is not None, "PoolerConfig is required for PRM models"
 
-        self.pooler = DispatchPooler(
-            {"token_classify": Pooler.for_token_classify(pooler_config)}
-        )
+        self.pooler = pooler_for_token_classify(pooler_config)
 
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors

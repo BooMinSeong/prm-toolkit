@@ -1,8 +1,8 @@
-# vLLM 0.13.0 Skywork-o1-Open-PRM Implementation Summary (Final)
+# vLLM 0.14.1 Skywork-o1-Open-PRM Implementation Summary
 
 ## Executive Summary
 
-Successfully implemented Skywork-o1-Open-PRM support for vLLM 0.13.0 by creating a custom model implementation that bridges Skywork's `v_head` architecture with vLLM 0.13.0's API.
+Successfully implemented Skywork-o1-Open-PRM support for vLLM 0.14.1 by creating a custom model implementation that bridges Skywork's `v_head` architecture with vLLM 0.14.1's API.
 
 **Status**: ✅ **Working** - Tested and verified with correct step-wise reward output.
 
@@ -16,11 +16,11 @@ Successfully implemented Skywork-o1-Open-PRM support for vLLM 0.13.0 by creating
    ```
    ValueError: There is no module or parameter named 'v_head' in Qwen2ForProcessRewardModel
    ```
-3. **Plugin Incompatibility**: Skywork's vLLM plugin uses v0.6.4.post1 API, incompatible with 0.13.0
+3. **Plugin Incompatibility**: Skywork's vLLM plugin uses v0.6.4.post1 API, incompatible with 0.14.1
 
 ### Why It Works Now
 - Created custom `Qwen2ForPrmModel` that matches Skywork's exact architecture (with `v_head`)
-- Used vLLM 0.13.0's native APIs (Pooler, DispatchPooler, etc.)
+- Used vLLM 0.14.1's native APIs (Pooler, DispatchPooler, etc.)
 - Properly integrated with STEP pooling for process reward models
 
 ---
@@ -30,7 +30,7 @@ Successfully implemented Skywork-o1-Open-PRM support for vLLM 0.13.0 by creating
 ### Files Created/Modified
 
 #### 1. `skywork_prm_model.py` (New - 180 lines)
-**Purpose**: Custom vLLM 0.13.0-compatible model implementation for Skywork-o1-Open-PRM
+**Purpose**: Custom vLLM 0.14.1-compatible model implementation for Skywork-o1-Open-PRM
 
 **Key Components**:
 ```python
@@ -190,7 +190,7 @@ mv skywork-o1-prm-inference/setup.py skywork-o1-prm-inference/setup.py.backup
 
 ### 1. **Minimal Dependencies**
 - No external plugins required
-- Uses only vLLM 0.13.0 built-in APIs
+- Uses only vLLM 0.14.1 built-in APIs
 
 ### 2. **Clean Architecture**
 - Single custom model file (180 lines)
@@ -198,7 +198,7 @@ mv skywork-o1-prm-inference/setup.py skywork-o1-prm-inference/setup.py.backup
 - Follows vLLM's model implementation patterns
 
 ### 3. **Full Compatibility**
-- Works with vLLM 0.13.0's LLM API
+- Works with vLLM 0.14.1's LLM API
 - Compatible with Skywork's data preparation utilities
 - Proper STEP pooling integration
 
@@ -216,7 +216,7 @@ mv skywork-o1-prm-inference/setup.py skywork-o1-prm-inference/setup.py.backup
 **Cons**:
 - Complex - requires deep understanding of vLLM internals
 - High maintenance burden
-- API changes between v0.6.4 and v0.13.0 are extensive
+- API changes between v0.6.4 and v0.14.1 are extensive
 
 ### Approach 2: Modify Local config.json
 **Pros**: Simple one-time change
@@ -268,7 +268,7 @@ python reward_skywork_server.py
 ### Upstream Contribution
 Consider contributing this implementation to:
 - vLLM project (as reference for other PRM models)
-- Skywork repository (as 0.13.0 compatibility layer)
+- Skywork repository (as 0.14.1 compatibility layer)
 
 ---
 
@@ -288,9 +288,9 @@ Consider contributing this implementation to:
 
 ## Conclusion
 
-This implementation provides a production-ready solution for using Skywork-o1-Open-PRM with vLLM 0.13.0. The custom model approach:
+This implementation provides a production-ready solution for using Skywork-o1-Open-PRM with vLLM 0.14.1. The custom model approach:
 
-✅ Fully compatible with vLLM 0.13.0
+✅ Fully compatible with vLLM 0.14.1
 ✅ Supports Skywork's exact architecture
 ✅ Properly handles STEP pooling
 ✅ Easy to deploy and maintain

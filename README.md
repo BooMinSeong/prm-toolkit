@@ -7,7 +7,7 @@ vLLM을 사용한 수학 추론 단계 평가를 위한 Process Reward Model (PR
 이 프로젝트는 다음 Process Reward Models을 지원합니다:
 
 - **Qwen2.5-Math-PRM-7B**: Qwen의 수학 추론용 PRM
-- **Skywork-o1-Open-PRM-Qwen-2.5-1.5B**: Skywork의 오픈소스 PRM (vLLM 0.13.0 호환)
+- **Skywork-o1-Open-PRM-Qwen-2.5-1.5B**: Skywork의 오픈소스 PRM (vLLM 0.14.1 호환)
 
 ## 환경 설정
 
@@ -70,7 +70,7 @@ python reward_skywork_o1_prm.py
 
 **특징:**
 - 단일 스크립트로 모델 로드 및 추론
-- 자동으로 vLLM 0.13.0 호환 모델 등록
+- 자동으로 vLLM 0.14.1 호환 모델 등록
 - GPU 메모리 직접 사용
 
 **출력 예시:**
@@ -168,13 +168,13 @@ python reward_skywork_o1_prm.py \
 - **reward_skywork_o1_prm.py**: Skywork-o1-Open-PRM의 직접 실행 스크립트
 - **start_reward_server.py**: vLLM 서버를 시작하는 헬퍼 스크립트
 - **reward_skywork_server.py**: OpenAI 호환 API를 사용하는 서버/클라이언트 모드 클라이언트
-- **skywork_prm_model.py**: Skywork-o1-Open-PRM의 vLLM 0.13.0 호환 커스텀 모델 구현 (vLLM 플러그인)
+- **skywork_prm_model.py**: Skywork-o1-Open-PRM의 vLLM 0.14.1 호환 커스텀 모델 구현 (vLLM 플러그인)
 - **skywork_utils.py**: Skywork PRM 입력 준비 및 sigmoid 정규화 유틸리티 함수
 - **pyproject.toml**: 패키지 메타데이터 및 vLLM 플러그인 entry point 정의
 
 모든 스크립트는 vLLM의 `LLM.reward()` API를 `runner="pooling"` 설정과 함께 사용합니다.
 
-## vLLM 0.13.0 호환성
+## vLLM 0.14.1 호환성
 
 Skywork-o1-Open-PRM은 `Qwen2ForPrmModel` 아키텍처를 사용하며, vLLM의 표준 `Qwen2ForProcessRewardModel`과 다른 `v_head` 파라미터 구조를 가지고 있습니다.
 
@@ -191,7 +191,7 @@ pip install -e .
 
 **커스텀 모델 구현 (`skywork_prm_model.py`):**
 - Skywork의 정확한 아키텍처 구현 (`ValueHead` with `v_head` 파라미터)
-- vLLM 0.13.0의 네이티브 API 사용 (`Pooler`, `DispatchPooler`)
+- vLLM 0.14.1의 네이티브 API 사용 (`Pooler`, `DispatchPooler`)
 - 프로세스 수준 보상을 위한 STEP pooling 지원
 - vLLM의 `ModelRegistry`에 자동 등록 (`Qwen2ForPrmModel` → `SkyworkQwen2ForPrmModel`)
 

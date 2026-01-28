@@ -20,7 +20,8 @@
 #      python reward_qwen_prm_server.py
 #
 # Note: Qwen2.5-Math-PRM-7B uses STEP pooling with <extra_0> tokens
-#       as step delimiters. Rewards are extracted at <extra_0> positions.
+#       as step delimiters. Returns [negative_prob, positive_prob] pairs.
+#       We use the positive probability (index 1) as the reward score.
 
 import argparse
 import requests
@@ -151,13 +152,15 @@ def main(args):
         print(f"\nStep-wise rewards:")
 
         # Match rewards to steps (assuming 1:1 correspondence)
-        # Each reward may be a list (e.g., [positive_logit, negative_logit])
+        # Each reward may be a list (e.g., [negative_prob, positive_prob])
         for step_idx in range(min(len(steps), len(rewards_raw))):
             step = steps[step_idx]
             reward_data = rewards_raw[step_idx]
-            # If reward is a list, show all values
+            # Qwen PRM returns [negative_prob, positive_prob]
+            # Use index 1 (positive probability) as the actual reward
             if isinstance(reward_data, list):
-                reward_str = f"[{', '.join(f'{r:.6f}' for r in reward_data)}]"
+                reward_value = reward_data[1]
+                reward_str = f"{reward_value:.6f} {reward_data}"
             else:
                 reward_str = f"{reward_data:.6f}"
             step_preview = step[:80].replace("\n", " ") if len(step) > 80 else step.replace("\n", " ")
@@ -169,15 +172,17 @@ def main(args):
             for extra_idx in range(len(steps), len(rewards_raw)):
                 reward_data = rewards_raw[extra_idx]
                 if isinstance(reward_data, list):
-                    reward_str = f"[{', '.join(f'{r:.6f}' for r in reward_data)}]"
+                    reward_value = reward_data[1]  # positive probability
+                    reward_str = f"{reward_value:.6f} {reward_data}"
                 else:
                     reward_str = f"{reward_data:.6f}"
                 print(f"  Reward {extra_idx + 1}: {reward_str}")
 
         if len(rewards_raw) > 0:
-            # Calculate average from first value if rewards are lists
+            # Calculate average from positive probability (index 1) if rewards are lists
             if isinstance(rewards_raw[0], list):
-                avg_reward = sum(r[0] for r in rewards_raw) / len(rewards_raw)
+                # Use positive probability (index 1) for average
+                avg_reward = sum(r[1] for r in rewards_raw) / len(rewards_raw)
             else:
                 avg_reward = sum(rewards_raw) / len(rewards_raw)
             print(f"\nAverage reward: {avg_reward:.6f}")

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test script for Skywork-o1-Open-PRM with vLLM 0.13.0
+# Test script for Skywork-o1-Open-PRM with vLLM 0.14.1
 # Updated to use custom model implementation
 
 echo "=========================================="
