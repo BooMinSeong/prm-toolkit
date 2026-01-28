@@ -110,7 +110,6 @@ rewards = prm.score(prompt="...", response="...")
 - **start_reward_server.py**: Helper script to start vLLM server with Skywork-o1-Open-PRM
 - **reward_skywork_server.py**: Client script for server/client mode using OpenAI-compatible API
 - **skywork_prm_model.py**: Custom `SkyworkQwen2ForPrmModel` implementation (vLLM plugin)
-- **skywork_utils.py**: Utility functions (prepare_input, sigmoid) - integrated into SkyworkPrmServer
 - **pyproject.toml**: Package configuration with vLLM plugin entry point
 
 Legacy scripts use vLLM's `LLM.reward()` API or direct server calls. **Use the unified PRM server for new code.**
@@ -149,7 +148,7 @@ This automatically registers the model when vLLM starts. You should see:
 ✓ Registered SkyworkQwen2ForPrmModel (Qwen2ForPrmModel) for Skywork-o1-Open-PRM
 ```
 
-See `IMPLEMENTATION_SUMMARY_V2.md` for technical details.
+See inline documentation in `prm_server.py` and `skywork_prm_model.py` for technical details.
 
 ## Migration Guide
 
