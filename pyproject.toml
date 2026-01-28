@@ -5,16 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "prm-toolkit"
 version = "0.1.0"
-description = "vLLM plugin for Skywork-o1-Open-PRM"
-requires-python = ">=3.10"
+description = "Unified PRM inference toolkit for vLLM (Qwen & Skywork Process Reward Models)"
+requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
+readme = "README.md"
 
 dependencies = [
-    "vllm==0.14.1",
+    "vllm>=0.14.1",
+    "transformers>=4.40.0",
+    "requests>=2.31.0",
+    "torch>=2.5.0",
 ]
 
 [project.entry-points."vllm.general_plugins"]
 register_skywork_prm = "skywork_prm_model:register_skywork_prm_model"
 
 [tool.setuptools]
-py-modules = ["skywork_prm_model", "skywork_utils"]
+py-modules = ["skywork_prm_model"]

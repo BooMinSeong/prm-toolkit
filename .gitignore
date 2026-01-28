@@ -30,3 +30,9 @@ Thumbs.db
 # Local development
 .claude/
 *.log
+
+# Lock files (프로젝트 특성에 따라 선택)
+# uv.lock
+
+# Egg info
+*.egg-info/
