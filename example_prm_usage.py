@@ -4,16 +4,18 @@
 Example usage of the unified PRM server architecture.
 
 This script demonstrates how to use the PrmServer classes with both
-Qwen and Skywork PRM models.
+Qwen and Skywork PRM models, supporting both single and batch scoring.
 
 Usage:
     # For Qwen PRM (start server first):
     # Terminal 1: vllm serve Qwen/Qwen2.5-Math-PRM-7B --port 8080 --trust-remote-code
-    # Terminal 2: python example_prm_usage.py --model qwen
+    # Terminal 2 (single): python example_prm_usage.py --model qwen
+    # Terminal 2 (batch):  python example_prm_usage.py --model qwen --batch
 
     # For Skywork PRM (start server first):
     # Terminal 1: python start_reward_server.py
-    # Terminal 2: python example_prm_usage.py --model skywork
+    # Terminal 2 (single): python example_prm_usage.py --model skywork
+    # Terminal 2 (batch):  python example_prm_usage.py --model skywork --batch
 """
 
 import argparse
@@ -80,6 +82,11 @@ def main():
         default=None,
         help="Server base URL (default: http://localhost:8080 for Qwen, http://localhost:8081 for Skywork)"
     )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Run batch scoring example instead of single scoring"
+    )
     args = parser.parse_args()
 
     # Configure based on model selection
@@ -116,6 +123,15 @@ def main():
     prm = create_prm_server(config)
     print(f"  Model type: {prm.model_type}")
 
+    # Run batch or single scoring based on argument
+    if args.batch:
+        run_batch_example(prm, prompt, response, args.model, base_url)
+    else:
+        run_single_example(prm, prompt, response, base_url)
+
+
+def run_single_example(prm, prompt, response, base_url):
+    """Run single scoring example"""
     # Display problem
     print(f"\n{'=' * 80}")
     print("PROBLEM")
@@ -163,6 +179,106 @@ def main():
         print(f"  1. Ensure the vLLM server is running at {base_url}")
         print(f"  2. Check that the model is correctly loaded")
         print(f"  3. Verify network connectivity")
+
+
+def run_batch_example(prm, example_prompt, example_response, model_type, base_url):
+    """Run batch scoring example with multiple prompt-response pairs"""
+    print(f"\n{'=' * 80}")
+    print("BATCH SCORING EXAMPLE")
+    print("=" * 80)
+
+    # Create multiple test cases
+    if model_type == "qwen":
+        # Qwen examples use double newline as delimiter
+        prompts = [
+            example_prompt,  # Original flamingo problem
+            "What is 15 + 27?",
+            "If a book costs $12 and you buy 3 books, how much do you spend?",
+        ]*10
+        responses = [
+            example_response,  # Original flamingo response
+            "First, I need to add 15 and 27.\n\n15 + 27 = 42\n\nTherefore, the answer is \\boxed{42}.\n\n"*30,
+            "Step 1: Identify the cost per book: $12\n\nStep 2: Multiply by the number of books: $12 × 3 = $36\n\nStep 3: The total cost is \\boxed{36} dollars.\n\n"*30,
+        ]*10
+    else:  # skywork
+        # Skywork examples use single newline as delimiter
+        prompts = [
+            example_prompt,  # Original Janet's ducks problem
+            "What is 15 + 27?",
+            "If a book costs $12 and you buy 3 books, how much do you spend?",
+        ]
+        responses = [
+            example_response,  # Original Janet's ducks response
+            "Step 1: Add the two numbers: 15 + 27\nStep 2: Calculate: 15 + 27 = 42\nStep 3: The answer is 42",
+            "Step 1: Cost per book is $12\nStep 2: Number of books is 3\nStep 3: Total cost: $12 × 3 = $36\nStep 4: Answer is $36",
+        ]
+
+    print(f"Processing {len(prompts)} prompt-response pairs...")
+    print(f"Using single batch API call for efficiency\n")
+
+    # Display all problems briefly
+    for i, (prompt, response) in enumerate(zip(prompts, responses), 1):
+        print(f"Problem {i}:")
+        print(f"  Prompt: {prompt[:60]}{'...' if len(prompt) > 60 else ''}")
+        print(f"  Response: {response[:60]}{'...' if len(response) > 60 else ''}")
+
+    # Score batch
+    print(f"\n{'=' * 80}")
+    print("BATCH SCORING")
+    print("=" * 80)
+    print("Sending batch request to PRM server...")
+
+    try:
+        batch_rewards = prm.score_batch(prompts=prompts, responses=responses)
+
+        print(f"\n{'=' * 80}")
+        print("BATCH RESULTS")
+        print("=" * 80)
+        print(f"Successfully scored {len(batch_rewards)} responses\n")
+
+        # Display results for each item
+        for i, (prompt, response, rewards) in enumerate(zip(prompts, responses, batch_rewards), 1):
+            print(f"{'─' * 80}")
+            print(f"Result {i}/{len(batch_rewards)}")
+            print(f"{'─' * 80}")
+            print(f"Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}")
+            print(f"\nNumber of steps: {len(rewards)}")
+            print("Step-wise rewards:")
+
+            for j, reward in enumerate(rewards, 1):
+                print(f"  Step {j}: {reward:.6f}")
+
+            avg_reward = sum(rewards) / len(rewards) if rewards else 0
+            print(f"\nAverage reward: {avg_reward:.6f}")
+            print(f"Min reward: {min(rewards):.6f}")
+            print(f"Max reward: {max(rewards):.6f}")
+            print()
+
+        # Summary statistics
+        print(f"{'=' * 80}")
+        print("BATCH SUMMARY")
+        print("=" * 80)
+        all_avg_rewards = [sum(r)/len(r) if r else 0 for r in batch_rewards]
+        print(f"Overall average reward: {sum(all_avg_rewards)/len(all_avg_rewards):.6f}")
+        print(f"Best performing response: Problem {all_avg_rewards.index(max(all_avg_rewards)) + 1} ({max(all_avg_rewards):.6f})")
+        print(f"Worst performing response: Problem {all_avg_rewards.index(min(all_avg_rewards)) + 1} ({min(all_avg_rewards):.6f})")
+
+        print(f"\n{'=' * 80}")
+        print("SUCCESS")
+        print("=" * 80)
+        print("Batch processing completed successfully!")
+        print(f"Network efficiency: 1 API call for {len(prompts)} inputs")
+
+    except Exception as e:
+        print(f"\n{'=' * 80}")
+        print("ERROR")
+        print("=" * 80)
+        print(f"Failed to score batch: {e}")
+        print("\nTroubleshooting:")
+        print(f"  1. Ensure the vLLM server is running at {base_url}")
+        print(f"  2. Check that the model is correctly loaded")
+        print(f"  3. Verify network connectivity")
+        print(f"  4. Check server logs for batch processing errors")
 
 
 if __name__ == "__main__":

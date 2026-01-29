@@ -128,6 +128,70 @@ class PrmServer(ABC):
         rewards = self.post_process_output(raw_results)
         return rewards
 
+    def score_batch(self, prompts: List[str], responses: List[str]) -> List[List[float]]:
+        """
+        Batch processing: compute step-wise rewards for multiple (prompt, response) pairs.
+
+        Uses vLLM's batch inference to process all inputs in a single API call,
+        significantly reducing network overhead and leveraging GPU batch processing.
+
+        Args:
+            prompts: List of problem statements
+            responses: List of step-by-step solutions
+
+        Returns:
+            List of step-wise reward lists, one per input pair
+
+        Example:
+            >>> prompts = ["What is 2+2?", "What is 3+3?"]
+            >>> responses = ["Step 1: Add\\n\\nStep 2: Result is 4",
+            ...              "Step 1: Add\\n\\nStep 2: Result is 6"]
+            >>> batch_rewards = prm.score_batch(prompts, responses)
+            >>> # batch_rewards[0] = rewards for first input
+            >>> # batch_rewards[1] = rewards for second input
+        """
+        if len(prompts) != len(responses):
+            raise ValueError(f"Length mismatch: {len(prompts)} prompts vs {len(responses)} responses")
+
+        if len(prompts) == 0:
+            return []
+
+        # Preprocess all inputs
+        all_inputs = []
+        all_metadata = []
+        for prompt, response in zip(prompts, responses):
+            processed = self.preprocess_input(prompt, response)
+            all_inputs.extend(processed["input"])
+            all_metadata.append(processed["metadata"])
+
+        # Single batch API call
+        try:
+            batch_response = requests.post(
+                f"{self.base_url}/pooling",
+                json={"input": all_inputs},
+                headers={"Content-Type": "application/json"},
+                timeout=self.config.timeout
+            )
+            batch_response.raise_for_status()
+            pooling_response = batch_response.json()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"PRM server batch request failed: {e}")
+
+        # Post-process each result separately
+        batch_rewards = []
+        for i, metadata in enumerate(all_metadata):
+            # Reconstruct raw_results format for post_process_output
+            item_result = {
+                "response": {
+                    "data": [pooling_response["data"][i]]
+                },
+                "metadata": metadata
+            }
+            rewards = self.post_process_output(item_result)
+            batch_rewards.append(rewards)
+
+        return batch_rewards
+
 
 class QwenPrmServer(PrmServer):
     """Qwen2.5-Math-PRM implementation"""
