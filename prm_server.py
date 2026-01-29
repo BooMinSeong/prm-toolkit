@@ -7,16 +7,16 @@ Provides a server-based interface for evaluating step-by-step reasoning
 with different PRM models (Qwen, Skywork, etc.).
 
 Usage:
-    from prm_server import PrmConfig, create_prm_server
+    from prm_server import PrmConfig, load_prm_server
 
     # Create configuration
     config = PrmConfig(
-        model="Qwen/Qwen2.5-Math-PRM-7B",
+        prm_path="Qwen/Qwen2.5-Math-PRM-7B",
         base_url="http://localhost:8080"
     )
 
     # Create PRM server instance
-    prm = create_prm_server(config)
+    prm = load_prm_server(config)
 
     # Score a response
     rewards = prm.score(
@@ -35,7 +35,7 @@ import numpy as np
 @dataclass
 class PrmConfig:
     """Configuration for PRM server"""
-    model: str                    # Model name/path
+    prm_path: str                    # Model name/path
     base_url: str                 # vLLM server URL (e.g., "http://localhost:8081")
     timeout: int = 300            # Request timeout in seconds
     trust_remote_code: bool = True
@@ -197,9 +197,9 @@ class QwenPrmServer(PrmServer):
     """Qwen2.5-Math-PRM implementation"""
 
     def model_check(self) -> str:
-        if "Qwen" in self.config.model and "PRM" in self.config.model:
+        if "Qwen" in self.config.prm_path and "PRM" in self.config.prm_path:
             return "qwen-prm"
-        raise ValueError(f"Model {self.config.model} not compatible with QwenPrmServer")
+        raise ValueError(f"Model {self.config.prm_path} not compatible with QwenPrmServer")
 
     def _init_tokenizer(self):
         # Qwen server mode does NOT require tokenizer
@@ -264,14 +264,14 @@ class SkyworkPrmServer(PrmServer):
     """Skywork-o1-Open-PRM implementation"""
 
     def model_check(self) -> str:
-        if "Skywork" in self.config.model and "PRM" in self.config.model:
+        if "Skywork" in self.config.prm_path and "PRM" in self.config.prm_path:
             return "skywork-prm"
-        raise ValueError(f"Model {self.config.model} not compatible with SkyworkPrmServer")
+        raise ValueError(f"Model {self.config.prm_path} not compatible with SkyworkPrmServer")
 
     def _init_tokenizer(self):
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.config.model,
+            self.config.prm_path,
             trust_remote_code=self.config.trust_remote_code
         )
 
@@ -349,9 +349,9 @@ class SkyworkPrmServer(PrmServer):
         return step_rewards
 
 
-def create_prm_server(config: PrmConfig) -> PrmServer:
+def load_prm_server(config: PrmConfig) -> PrmServer:
     """Factory to instantiate appropriate PRM server based on model"""
-    model_lower = config.model.lower()
+    model_lower = config.prm_path.lower()
 
     # Check Skywork first (more specific) since it contains "qwen" in the name
     if "skywork" in model_lower and "prm" in model_lower:
@@ -359,4 +359,4 @@ def create_prm_server(config: PrmConfig) -> PrmServer:
     elif "qwen" in model_lower and "prm" in model_lower:
         return QwenPrmServer(config)
     else:
-        raise ValueError(f"Unknown PRM model: {config.model}")
+        raise ValueError(f"Unknown PRM model: {config.prm_path}")

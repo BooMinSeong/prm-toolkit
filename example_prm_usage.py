@@ -19,7 +19,7 @@ Usage:
 """
 
 import argparse
-from prm_server import PrmConfig, create_prm_server
+from prm_server import PrmConfig, load_prm_server
 
 
 def get_qwen_example():
@@ -107,20 +107,20 @@ def main():
 
     # Create configuration
     config = PrmConfig(
-        model=model_name,
+        prm_path=model_name,
         base_url=base_url,
         timeout=300,
         trust_remote_code=True
     )
 
     print(f"\nConfiguration:")
-    print(f"  Model: {config.model}")
+    print(f"  Model: {config.prm_path}")
     print(f"  Base URL: {config.base_url}")
     print(f"  Timeout: {config.timeout}s")
 
     # Create PRM server instance
     print(f"\nInitializing PRM server...")
-    prm = create_prm_server(config)
+    prm = load_prm_server(config)
     print(f"  Model type: {prm.model_type}")
 
     # Run batch or single scoring based on argument
