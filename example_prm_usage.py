@@ -19,7 +19,7 @@ Usage:
 """
 
 import argparse
-from prm_server import PrmConfig, load_prm_server
+from prm_toolkit import PrmConfig, load_prm_server
 
 
 def get_qwen_example():
@@ -87,6 +87,17 @@ def main():
         action="store_true",
         help="Run batch scoring example instead of single scoring"
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=4096,
+        help="Maximum tokens for input (default: 4096, automatically truncates if exceeded)"
+    )
+    parser.add_argument(
+        "--demo-truncation",
+        action="store_true",
+        help="Run truncation demonstration with intentionally long input"
+    )
     args = parser.parse_args()
 
     # Configure based on model selection
@@ -110,21 +121,27 @@ def main():
         prm_path=model_name,
         base_url=base_url,
         timeout=300,
-        trust_remote_code=True
+        trust_remote_code=True,
+        max_tokens=args.max_tokens
     )
 
     print(f"\nConfiguration:")
     print(f"  Model: {config.prm_path}")
     print(f"  Base URL: {config.base_url}")
     print(f"  Timeout: {config.timeout}s")
+    print(f"  Max tokens: {config.max_tokens}")
 
     # Create PRM server instance
     print(f"\nInitializing PRM server...")
     prm = load_prm_server(config)
     print(f"  Model type: {prm.model_type}")
 
-    # Run batch or single scoring based on argument
-    if args.batch:
+    # Run batch, truncation demo, or single scoring based on arguments
+    if args.demo_truncation and args.batch:
+        run_batch_truncation_demo(prm, prompt, args.model, model_name, base_url)
+    elif args.demo_truncation:
+        run_truncation_demo(prm, prompt, args.model, model_name, base_url)
+    elif args.batch:
         run_batch_example(prm, prompt, response, args.model, base_url)
     else:
         run_single_example(prm, prompt, response, base_url)
@@ -279,6 +296,232 @@ def run_batch_example(prm, example_prompt, example_response, model_type, base_ur
         print(f"  2. Check that the model is correctly loaded")
         print(f"  3. Verify network connectivity")
         print(f"  4. Check server logs for batch processing errors")
+
+
+def run_batch_truncation_demo(prm, example_prompt, model_type, model_name, base_url):
+    """Demonstrate automatic truncation in batch mode with multiple long inputs"""
+    print(f"\n{'=' * 80}")
+    print("BATCH TRUNCATION DEMONSTRATION")
+    print("=" * 80)
+    print("This example shows automatic token limit handling with tail truncation in batch mode.\n")
+
+    # Create very long responses that exceed typical limits
+    if model_type == "qwen":
+        # Qwen uses double newline as step delimiter
+        long_responses = [
+            "\n\n".join([
+                f"Step {i}: This is a reasoning step with some calculations and explanations. "
+                f"We compute intermediate values and show our work carefully. "
+                f"The result of this step is {i * 2}."
+                for i in range(100)
+            ]),
+            "\n\n".join([
+                f"Step {i}: Another long response with different content. "
+                f"This step involves complex mathematical operations. "
+                f"The intermediate result here is {i * 3 + 1}."
+                for i in range(120)
+            ]),
+            "\n\n".join([
+                f"Step {i}: Third example with extensive reasoning. "
+                f"We carefully analyze each component. "
+                f"The calculated value is {i * i}."
+                for i in range(80)
+            ]),
+        ]
+        step_delimiter = "double newline (\\n\\n)"
+    else:  # skywork
+        # Skywork uses single newline as step delimiter
+        long_responses = [
+            "\n".join([
+                f"Step {i}: This is a reasoning step with some calculations and explanations. "
+                f"We compute intermediate values and show our work carefully. "
+                f"The result of this step is {i * 2}."
+                for i in range(100)
+            ]),
+            "\n".join([
+                f"Step {i}: Another long response with different content. "
+                f"This step involves complex mathematical operations. "
+                f"The intermediate result here is {i * 3 + 1}."
+                for i in range(120)
+            ]),
+            "\n".join([
+                f"Step {i}: Third example with extensive reasoning. "
+                f"We carefully analyze each component. "
+                f"The calculated value is {i * i}."
+                for i in range(80)
+            ]),
+        ]
+        step_delimiter = "single newline (\\n)"
+
+    # Create corresponding prompts
+    prompts = [example_prompt] * len(long_responses)
+
+    print(f"Created {len(long_responses)} test responses with varying lengths (delimiter: {step_delimiter})")
+    for i, response in enumerate(long_responses, 1):
+        step_count = len(response.split("\n\n" if model_type == "qwen" else "\n"))
+        print(f"  Response {i}: {step_count} steps")
+    print()
+
+    # Create config with small limit to trigger truncation
+    print("Testing with max_tokens=1024 (intentionally small to trigger truncation)...")
+    truncated_config = PrmConfig(
+        prm_path=model_name,
+        base_url=base_url,
+        max_tokens=1024  # Intentionally small - will auto-truncate
+    )
+    prm_truncated = load_prm_server(truncated_config)
+
+    print(f"\n{'=' * 80}")
+    print("BATCH SCORING WITH TRUNCATION")
+    print("=" * 80)
+    print("Sending batch request to PRM server...")
+    print("Watch for truncation warnings in logs below:\n")
+
+    try:
+        batch_rewards = prm_truncated.score_batch(prompts=prompts, responses=long_responses)
+
+        print(f"\n{'=' * 80}")
+        print("BATCH TRUNCATION RESULTS")
+        print("=" * 80)
+        print(f"Successfully scored {len(batch_rewards)} responses with truncation\n")
+
+        # Original step counts
+        original_steps = [100, 120, 80]
+
+        # Display results for each item
+        for i, (rewards, original_count) in enumerate(zip(batch_rewards, original_steps), 1):
+            print(f"{'─' * 80}")
+            print(f"Result {i}/{len(batch_rewards)}")
+            print(f"{'─' * 80}")
+            print(f"Original input: {original_count} steps")
+            print(f"After truncation: {len(rewards)} steps (kept first {len(rewards)} steps)")
+            print(f"Truncation ratio: {len(rewards)/original_count*100:.1f}% of original")
+
+            print(f"\nStep-wise rewards (first 10 of {len(rewards)} truncated steps):")
+            for j, reward in enumerate(rewards[:10], 1):
+                print(f"  Step {j}: {reward:.6f}")
+            if len(rewards) > 10:
+                print(f"  ... ({len(rewards) - 10} more steps)")
+
+            avg_reward = sum(rewards) / len(rewards) if rewards else 0
+            print(f"\nAverage reward: {avg_reward:.6f}")
+            print(f"Min reward: {min(rewards):.6f}")
+            print(f"Max reward: {max(rewards):.6f}")
+            print()
+
+        # Summary statistics
+        print(f"{'=' * 80}")
+        print("BATCH TRUNCATION SUMMARY")
+        print("=" * 80)
+        all_avg_rewards = [sum(r)/len(r) if r else 0 for r in batch_rewards]
+        all_truncated_steps = [len(r) for r in batch_rewards]
+
+        print(f"Total responses processed: {len(batch_rewards)}")
+        print(f"Original total steps: {sum(original_steps)}")
+        print(f"Truncated total steps: {sum(all_truncated_steps)}")
+        print(f"Overall truncation ratio: {sum(all_truncated_steps)/sum(original_steps)*100:.1f}%")
+        print(f"\nOverall average reward: {sum(all_avg_rewards)/len(all_avg_rewards):.6f}")
+        print(f"Best performing response: #{all_avg_rewards.index(max(all_avg_rewards)) + 1} ({max(all_avg_rewards):.6f})")
+        print(f"Worst performing response: #{all_avg_rewards.index(min(all_avg_rewards)) + 1} ({min(all_avg_rewards):.6f})")
+
+        print(f"\n{'=' * 80}")
+        print("SUCCESS")
+        print("=" * 80)
+        print("Automatic truncation handled batch of long inputs successfully!")
+        print(f"Tail truncation kept the first steps that fit within 1024 tokens for each input.")
+        print(f"Network efficiency: 1 API call for {len(prompts)} truncated inputs")
+
+    except Exception as e:
+        print(f"\n{'=' * 80}")
+        print("ERROR")
+        print("=" * 80)
+        print(f"Failed to score batch: {e}")
+        print("\nTroubleshooting:")
+        print(f"  1. Ensure the vLLM server is running at {base_url}")
+        print(f"  2. Check that the model is correctly loaded")
+        print(f"  3. Verify network connectivity")
+        print(f"  4. Check server logs for batch processing errors")
+
+
+def run_truncation_demo(prm, example_prompt, model_type, model_name, base_url):
+    """Demonstrate automatic truncation with intentionally long input"""
+    print(f"\n{'=' * 80}")
+    print("TRUNCATION DEMONSTRATION")
+    print("=" * 80)
+    print("This example shows automatic token limit handling with tail truncation.\n")
+
+    # Create very long response that exceeds typical limits
+    if model_type == "qwen":
+        # Qwen uses double newline as step delimiter
+        long_response = "\n\n".join([
+            f"Step {i}: This is a reasoning step with some calculations and explanations. "
+            f"We compute intermediate values and show our work carefully. "
+            f"The result of this step is {i * 2}."
+            for i in range(100)
+        ])
+        step_delimiter = "double newline (\\n\\n)"
+    else:  # skywork
+        # Skywork uses single newline as step delimiter
+        long_response = "\n".join([
+            f"Step {i}: This is a reasoning step with some calculations and explanations. "
+            f"We compute intermediate values and show our work carefully. "
+            f"The result of this step is {i * 2}."
+            for i in range(100)
+        ])
+        step_delimiter = "single newline (\\n)"
+
+    print(f"Created test response with 100 steps (delimiter: {step_delimiter})")
+    print(f"Response preview: {long_response[:200]}...\n")
+
+    # Create config with small limit to trigger truncation
+    print("Testing with max_tokens=1024 (intentionally small to trigger truncation)...")
+    truncated_config = PrmConfig(
+        prm_path=model_name,
+        base_url=base_url,
+        max_tokens=1024  # Intentionally small - will auto-truncate
+    )
+    prm_truncated = load_prm_server(truncated_config)
+
+    print(f"\n{'=' * 80}")
+    print("SCORING WITH TRUNCATION")
+    print("=" * 80)
+    print("Sending request to PRM server...")
+    print("Watch for truncation warning in logs below:\n")
+
+    try:
+        rewards = prm_truncated.score(prompt=example_prompt, response=long_response)
+
+        print(f"\n{'=' * 80}")
+        print("TRUNCATION RESULTS")
+        print("=" * 80)
+        print(f"Original input: 100 steps")
+        print(f"After truncation: {len(rewards)} steps (kept first {len(rewards)} steps)")
+        print(f"Truncation ratio: {len(rewards)/100*100:.1f}% of original")
+
+        print(f"\nStep-wise rewards (truncated):")
+        for i, reward in enumerate(rewards[:10], 1):  # Show first 10
+            print(f"  Step {i}: {reward:.6f}")
+        if len(rewards) > 10:
+            print(f"  ... ({len(rewards) - 10} more steps)")
+
+        avg_reward = sum(rewards) / len(rewards) if rewards else 0
+        print(f"\nAverage reward: {avg_reward:.6f}")
+
+        print(f"\n{'=' * 80}")
+        print("SUCCESS")
+        print("=" * 80)
+        print("Automatic truncation handled long input successfully!")
+        print(f"Tail truncation kept the first {len(rewards)} steps that fit within 1024 tokens.")
+
+    except Exception as e:
+        print(f"\n{'=' * 80}")
+        print("ERROR")
+        print("=" * 80)
+        print(f"Failed to score response: {e}")
+        print("\nTroubleshooting:")
+        print(f"  1. Ensure the vLLM server is running at {base_url}")
+        print(f"  2. Check that the model is correctly loaded")
+        print(f"  3. Verify network connectivity")
 
 
 if __name__ == "__main__":
