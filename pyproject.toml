@@ -3,7 +3,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "prm-toolkit"
+name = "prm_toolkit"
 version = "0.1.0"
 description = "Unified PRM inference toolkit for vLLM (Qwen & Skywork Process Reward Models)"
 requires-python = ">=3.11"
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.entry-points."vllm.general_plugins"]
-register_skywork_prm = "skywork_prm_model:register_skywork_prm_model"
+register_skywork_prm = "prm_toolkit.skywork_prm_model:register_skywork_prm_model"
 
 [tool.setuptools]
-py-modules = ["skywork_prm_model"]
+packages = ["prm_toolkit"]

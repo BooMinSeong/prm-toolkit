@@ -179,7 +179,7 @@ def register_skywork_prm_model():
     if "Qwen2ForPrmModel" not in ModelRegistry.get_supported_archs():
         ModelRegistry.register_model(
             "Qwen2ForPrmModel",  # Name from model config.json
-            "skywork_prm_model:SkyworkQwen2ForPrmModel"  # Our implementation
+            "prm_toolkit.skywork_prm_model:SkyworkQwen2ForPrmModel"  # Our implementation
         )
         print("✓ Registered SkyworkQwen2ForPrmModel (Qwen2ForPrmModel) for Skywork-o1-Open-PRM")
     else:

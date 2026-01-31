@@ -72,22 +72,22 @@ All scripts accept vLLM engine arguments via CLI (e.g., `--model`, `--max-model-
   - `PrmServer`: Abstract base class with `score(prompt, response)` API
   - `QwenPrmServer`: Qwen2.5-Math-PRM implementation
   - `SkyworkPrmServer`: Skywork-o1-Open-PRM implementation
-  - `create_prm_server()`: Factory function for model instantiation
+  - `load_prm_server()`: Factory function for model instantiation
 
 - **example_prm_usage.py**: Demonstration script showing usage with both models
 
 **Usage pattern:**
 ```python
-from prm_server import PrmConfig, create_prm_server
+from prm_toolkit import PrmConfig, load_prm_server
 
 # Create configuration
 config = PrmConfig(
-    model="Qwen/Qwen2.5-Math-PRM-7B",
+    prm_path="Qwen/Qwen2.5-Math-PRM-7B",
     base_url="http://localhost:8080"
 )
 
 # Create PRM server and score
-prm = create_prm_server(config)
+prm = load_prm_server(config)
 rewards = prm.score(prompt="...", response="...")
 ```
 
@@ -167,15 +167,15 @@ rewards_raw = pooling_response.json()["data"][0]["data"]
 rewards = [r[1] for r in rewards_raw]  # Extract positive probability
 ```
 
-**New approach (unified prm_server.py):**
+**New approach (unified prm_toolkit):**
 ```python
-from prm_server import PrmConfig, create_prm_server
+from prm_toolkit import PrmConfig, load_prm_server
 
 config = PrmConfig(
-    model="Qwen/Qwen2.5-Math-PRM-7B",
+    prm_path="Qwen/Qwen2.5-Math-PRM-7B",
     base_url="http://localhost:8080"
 )
-prm = create_prm_server(config)
+prm = load_prm_server(config)
 rewards = prm.score(prompt="...", response="...")
 ```
 

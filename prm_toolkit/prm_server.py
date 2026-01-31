@@ -7,7 +7,7 @@ Provides a server-based interface for evaluating step-by-step reasoning
 with different PRM models (Qwen, Skywork, etc.).
 
 Usage:
-    from prm_server import PrmConfig, load_prm_server
+    from prm_toolkit import PrmConfig, load_prm_server
 
     # Create configuration
     config = PrmConfig(
@@ -30,6 +30,9 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import requests
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,6 +42,7 @@ class PrmConfig:
     base_url: str                 # vLLM server URL (e.g., "http://localhost:8081")
     timeout: int = 300            # Request timeout in seconds
     trust_remote_code: bool = True
+    max_tokens: int = 4096        # Maximum token length for validation
 
 
 class PrmServer(ABC):
@@ -47,6 +51,13 @@ class PrmServer(ABC):
     def __init__(self, config: PrmConfig):
         self.config = config
         self.base_url = config.base_url
+
+        # Validate max_tokens
+        if self.config.max_tokens <= 0:
+            raise ValueError(f"max_tokens must be positive, got {self.config.max_tokens}")
+        if self.config.max_tokens < 128:
+            logger.warning(f"max_tokens={self.config.max_tokens} is very small and may truncate the prompt")
+
         self.model_type = self.model_check()
         self._init_tokenizer()
 
@@ -58,6 +69,24 @@ class PrmServer(ABC):
     @abstractmethod
     def _init_tokenizer(self):
         """Initialize model-specific tokenizer"""
+        pass
+
+    @abstractmethod
+    def validate_length(self, prompt: str, response: str) -> tuple[str, str]:
+        """
+        Validate and truncate input if it exceeds max_tokens.
+
+        Uses tail truncation: truncates from the END to preserve the prompt.
+
+        Args:
+            prompt: Problem statement
+            response: Step-by-step solution
+
+        Returns:
+            (validated_prompt, validated_response) tuple
+            If no truncation needed, returns originals unchanged
+            If truncated, returns modified versions that fit within max_tokens
+        """
         pass
 
     @abstractmethod
@@ -112,6 +141,7 @@ class PrmServer(ABC):
         """
         pass
 
+
     def score(self, prompt: str, response: str) -> List[float]:
         """
         Main entry point: compute step-wise rewards for a response.
@@ -123,7 +153,10 @@ class PrmServer(ABC):
         Returns:
             List of normalized step-wise rewards
         """
-        processed_data = self.preprocess_input(prompt, response)
+        # Validate and potentially truncate input
+        validated_prompt, validated_response = self.validate_length(prompt, response)
+
+        processed_data = self.preprocess_input(validated_prompt, validated_response)
         raw_results = self.send_request(processed_data)
         rewards = self.post_process_output(raw_results)
         return rewards
@@ -156,11 +189,13 @@ class PrmServer(ABC):
         if len(prompts) == 0:
             return []
 
-        # Preprocess all inputs
+        # Preprocess all inputs with validation
         all_inputs = []
         all_metadata = []
         for prompt, response in zip(prompts, responses):
-            processed = self.preprocess_input(prompt, response)
+            # Validate length first
+            validated_prompt, validated_response = self.validate_length(prompt, response)
+            processed = self.preprocess_input(validated_prompt, validated_response)
             all_inputs.extend(processed["input"])
             all_metadata.append(processed["metadata"])
 
@@ -202,9 +237,55 @@ class QwenPrmServer(PrmServer):
         raise ValueError(f"Model {self.config.prm_path} not compatible with QwenPrmServer")
 
     def _init_tokenizer(self):
-        # Qwen server mode does NOT require tokenizer
-        # Server handles tokenization internally
-        self.tokenizer = None
+        # Initialize tokenizer for validation (Qwen server handles actual tokenization)
+        from transformers import AutoTokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.config.prm_path,
+            trust_remote_code=self.config.trust_remote_code
+        )
+
+    def validate_length(self, prompt: str, response: str) -> tuple[str, str]:
+        """
+        Validate and truncate input if it exceeds max_tokens.
+
+        Uses Qwen-specific formatting with <extra_0> delimiters and chat template.
+        """
+        # Format using Qwen template with <extra_0> delimiters
+        steps = [s.strip() for s in response.split('\n\n') if s.strip()]
+        formatted_response = "<extra_0>".join(steps) + "<extra_0>"
+
+        system_msg = "Please reason step by step, and put your final answer within \\boxed{}."
+        formatted_text = (
+            f"<im_start>system\n{system_msg}<im_end>\n"
+            f"<im_start>user\n{prompt}<im_end>\n"
+            f"<im_start>assistant\n{formatted_response}<im_end><|endoftext|>"
+        )
+
+        # Tokenize and check length
+        tokens = self.tokenizer.encode(formatted_text)
+
+        if len(tokens) <= self.config.max_tokens:
+            return prompt, response  # No truncation
+
+        # Tail truncation
+        truncated_tokens = tokens[:self.config.max_tokens]
+        truncated_text = self.tokenizer.decode(truncated_tokens, skip_special_tokens=False)
+
+        # Parse back: extract response section
+        if "<im_start>assistant\n" in truncated_text:
+            start = truncated_text.find("<im_start>assistant\n") + len("<im_start>assistant\n")
+            response_section = truncated_text[start:].replace("<im_end>", "").replace("<|endoftext|>", "")
+
+            # Convert <extra_0> back to double newlines
+            truncated_steps = [s.strip() for s in response_section.split("<extra_0>") if s.strip()]
+            truncated_response = "\n\n".join(truncated_steps)
+
+            logger.warning(f"Qwen: Truncated {len(tokens)} → {self.config.max_tokens} tokens ({len(steps)} → {len(truncated_steps)} steps)")
+            return prompt, truncated_response
+        else:
+            # Extreme case: prompt itself was truncated
+            logger.error(f"Qwen: Extreme truncation - prompt exceeded {self.config.max_tokens} tokens")
+            return prompt, ""
 
     def preprocess_input(self, prompt: str, response: str) -> Dict[str, Any]:
         """
@@ -218,13 +299,10 @@ class QwenPrmServer(PrmServer):
         <im_start>user\n{prompt}<im_end>\n
         <im_start>assistant\n{response_with_<extra_0>}<im_end><|endoftext|>
         """
-        # Split response into steps using double newline (Qwen format)
+        # Split response into steps and format
         steps = [s.strip() for s in response.split('\n\n') if s.strip()]
-
-        # Join steps with <extra_0> delimiter
         formatted_response = "<extra_0>".join(steps) + "<extra_0>"
 
-        # Build chat-formatted prompt
         system_msg = "Please reason step by step, and put your final answer within \\boxed{}."
         formatted_prompt = (
             f"<im_start>system\n{system_msg}<im_end>\n"
@@ -275,6 +353,73 @@ class SkyworkPrmServer(PrmServer):
             trust_remote_code=self.config.trust_remote_code
         )
 
+    def validate_length(self, prompt: str, response: str) -> tuple[str, str]:
+        """
+        Validate and truncate input if it exceeds max_tokens.
+
+        Uses SAME tokenization logic as preprocess_input() to ensure accurate validation.
+        """
+        # Tokenize prompt (same as preprocess_input)
+        prompt_ids = self.tokenizer.encode(self.tokenizer.bos_token + prompt + "\n")
+
+        # Tokenize response step-by-step (same as preprocess_input)
+        step_token = "\n"
+        step_token_id = self.tokenizer.encode(step_token)[-1]
+
+        response_ids = []
+        steps = []
+
+        for step in response.split(step_token):
+            if step != "":
+                step_ids = self.tokenizer.encode(step)
+            else:
+                step_ids = []
+
+            step_ids += [step_token_id]
+            response_ids.extend(step_ids)
+            steps.append(step)
+
+        # Total token count (must match preprocess_input exactly)
+        total_tokens = len(prompt_ids) + len(response_ids)
+
+        if total_tokens <= self.config.max_tokens:
+            return prompt, response  # No truncation
+
+        # Tail truncation: remove steps from the end
+        tokens_available = self.config.max_tokens - len(prompt_ids)
+
+        if tokens_available <= 0:
+            logger.error(f"Skywork: Prompt alone ({len(prompt_ids)} tokens) exceeds max_tokens={self.config.max_tokens}")
+            return prompt, ""
+
+        # Rebuild response with as many steps as fit
+        truncated_response_ids = []
+        truncated_steps = []
+
+        for step in steps:
+            if step != "":
+                step_ids = self.tokenizer.encode(step)
+            else:
+                step_ids = []
+            step_ids += [step_token_id]
+
+            if len(truncated_response_ids) + len(step_ids) <= tokens_available:
+                truncated_response_ids.extend(step_ids)
+                truncated_steps.append(step)
+            else:
+                break  # Can't fit more steps
+
+        truncated_response = step_token.join(truncated_steps)
+        if truncated_steps:  # Add trailing newline if we have steps
+            truncated_response += step_token
+
+        logger.warning(
+            f"Skywork: Truncated {total_tokens} → {len(prompt_ids) + len(truncated_response_ids)} tokens "
+            f"({len(steps)} → {len(truncated_steps)} steps)"
+        )
+
+        return prompt, truncated_response
+
     def preprocess_input(self, prompt: str, response: str) -> Dict[str, Any]:
         """
         Format input using Skywork's tokenization with reward_flags.
@@ -284,29 +429,24 @@ class SkyworkPrmServer(PrmServer):
         Skywork uses newline as step delimiter.
         Creates reward_flags array to mark step-end positions.
         """
-        # Encode problem with BOS token
         prompt_ids = self.tokenizer.encode(self.tokenizer.bos_token + prompt + "\n")
 
         response_ids = []
         steps = []
         reward_flags = [0] * len(prompt_ids)
 
-        # Get step token ID (newline)
         step_token = "\n"
         step_token_id = self.tokenizer.encode(step_token)[-1]
 
-        # Process each step
         for step in response.split(step_token):
             if step != "":
                 step_ids = self.tokenizer.encode(step)
             else:
                 step_ids = []
 
-            # Add step token at the end
             step_ids += [step_token_id]
             step_text = step + step_token
 
-            # Create flags: 1 only at step end position
             flag = [0] * len(step_ids)
             flag[-1] = 1
 
