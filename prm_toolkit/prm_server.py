@@ -280,7 +280,7 @@ class QwenPrmServer(PrmServer):
             truncated_steps = [s.strip() for s in response_section.split("<extra_0>") if s.strip()]
             truncated_response = "\n\n".join(truncated_steps)
 
-            logger.warning(f"Qwen: Truncated {len(tokens)} → {self.config.max_tokens} tokens ({len(steps)} → {len(truncated_steps)} steps)")
+            logger.warning(f"Qwen: Token-level truncation {len(tokens)} → {self.config.max_tokens} tokens ({len(steps)} → {len(truncated_steps)} steps, last step may be incomplete)")
             return prompt, truncated_response
         else:
             # Extreme case: prompt itself was truncated
@@ -357,7 +357,8 @@ class SkyworkPrmServer(PrmServer):
         """
         Validate and truncate input if it exceeds max_tokens.
 
-        Uses SAME tokenization logic as preprocess_input() to ensure accurate validation.
+        Uses token-level truncation to maximize token utilization.
+        May result in incomplete final step if truncated mid-step.
         """
         # Tokenize prompt (same as preprocess_input)
         prompt_ids = self.tokenizer.encode(self.tokenizer.bos_token + prompt + "\n")
@@ -385,37 +386,28 @@ class SkyworkPrmServer(PrmServer):
         if total_tokens <= self.config.max_tokens:
             return prompt, response  # No truncation
 
-        # Tail truncation: remove steps from the end
+        # Tail truncation: remove tokens from the end (token-level, not step-level)
         tokens_available = self.config.max_tokens - len(prompt_ids)
 
         if tokens_available <= 0:
             logger.error(f"Skywork: Prompt alone ({len(prompt_ids)} tokens) exceeds max_tokens={self.config.max_tokens}")
             return prompt, ""
 
-        # Rebuild response with as many steps as fit
-        truncated_response_ids = []
-        truncated_steps = []
+        # Token-level truncation: cut at exact token boundary
+        truncated_response_ids = response_ids[:tokens_available]
 
-        for step in steps:
-            if step != "":
-                step_ids = self.tokenizer.encode(step)
-            else:
-                step_ids = []
-            step_ids += [step_token_id]
+        # Decode truncated tokens back to text
+        truncated_text = self.tokenizer.decode(truncated_response_ids, skip_special_tokens=False)
 
-            if len(truncated_response_ids) + len(step_ids) <= tokens_available:
-                truncated_response_ids.extend(step_ids)
-                truncated_steps.append(step)
-            else:
-                break  # Can't fit more steps
-
+        # Clean and reconstruct: split by step delimiter and filter empty steps
+        truncated_steps = [s.strip() for s in truncated_text.split(step_token) if s.strip()]
         truncated_response = step_token.join(truncated_steps)
-        if truncated_steps:  # Add trailing newline if we have steps
+        if truncated_steps:
             truncated_response += step_token
 
         logger.warning(
-            f"Skywork: Truncated {total_tokens} → {len(prompt_ids) + len(truncated_response_ids)} tokens "
-            f"({len(steps)} → {len(truncated_steps)} steps)"
+            f"Skywork: Token-level truncation {total_tokens} → {len(prompt_ids) + len(truncated_response_ids)} tokens "
+            f"({len(steps)} original steps → {len(truncated_steps)} truncated steps, last step may be incomplete)"
         )
 
         return prompt, truncated_response
