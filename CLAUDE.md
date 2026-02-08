@@ -21,6 +21,8 @@ pip install -e .  # Registers SkyworkQwen2ForPrmModel with vLLM
 
 ### Unified PRM Server (Recommended)
 
+**Server Mode (requires vLLM server running):**
+
 ```bash
 source .venv/bin/activate
 
@@ -37,6 +39,28 @@ python start_reward_server.py
 
 # Terminal 2: Run example
 python example_prm_usage.py --model skywork
+```
+
+**Local Mode (NEW - no server needed, loads model directly into GPU):**
+
+```bash
+source .venv/bin/activate
+
+# Qwen PRM - local mode
+python example_prm_usage.py --model qwen --local
+
+# Skywork PRM - local mode
+python example_prm_usage.py --model skywork --local
+
+# Batch processing in local mode
+python example_prm_usage.py --model qwen --local --batch
+
+# Custom GPU settings
+python example_prm_usage.py --model qwen --local --gpu-memory-utilization 0.7
+
+# Validation tests
+python test_local_mode.py qwen
+python test_local_mode.py skywork
 ```
 
 ### Legacy Scripts
@@ -77,10 +101,12 @@ All scripts accept vLLM engine arguments via CLI (e.g., `--model`, `--max-model-
 - **example_prm_usage.py**: Demonstration script showing usage with both models
 
 **Usage pattern:**
+
+Server Mode:
 ```python
 from prm_toolkit import PrmConfig, load_prm_server
 
-# Create configuration
+# Create configuration for server mode
 config = PrmConfig(
     prm_path="Qwen/Qwen2.5-Math-PRM-7B",
     base_url="http://localhost:8080"
@@ -91,11 +117,31 @@ prm = load_prm_server(config)
 rewards = prm.score(prompt="...", response="...")
 ```
 
+Local Mode (NEW):
+```python
+from prm_toolkit import PrmConfig, load_prm_server
+
+# Create configuration for local mode
+config = PrmConfig(
+    prm_path="Qwen/Qwen2.5-Math-PRM-7B",
+    use_local_mode=True,
+    gpu_memory_utilization=0.7,  # Use 70% of GPU memory
+)
+
+# Create PRM server and score
+prm = load_prm_server(config)
+rewards = prm.score(prompt="...", response="...")
+
+# Cleanup GPU resources when done
+prm.cleanup()
+```
+
 **Key features:**
-- Server-only access (no local LLM.reward() calls)
+- Two modes: Server (HTTP) or Local (direct GPU)
 - Model-specific preprocessing and postprocessing
 - Unified interface across different PRM models
 - Type-safe configuration with dataclass
+- Automatic GPU memory management in local mode
 
 **Model-specific details:**
 - **Qwen**: Uses `\n\n` (double newline) as step delimiter, `<extra_0>` tokens, returns `[neg_prob, pos_prob]` pairs
@@ -198,7 +244,20 @@ rewards = prm.score(prompt="...", response="...")
 - Internal: Tokenized with reward_flags marking step positions
 - Output: Sigmoid-normalized rewards [0, 1]
 
-### Starting Servers
+### Mode Selection Guide
+
+**Server Mode - Use when:**
+- Running multiple experiments/clients against same model
+- Sharing model across processes/machines
+- Need long-running service
+
+**Local Mode - Use when:**
+- Single script/notebook using the PRM
+- Want simpler setup (no server management)
+- Prototyping or one-off analysis
+- Have dedicated GPU for the task
+
+### Starting Servers (Server Mode Only)
 
 **Qwen PRM Server:**
 ```bash
@@ -220,4 +279,27 @@ vllm serve Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B \
     --trust-remote-code \
     --tensor-parallel-size 1 \
     --gpu-memory-utilization 0.9
+```
+
+### Local Mode Details
+
+**Configuration Options:**
+- `use_local_mode=True`: Enable local mode
+- `gpu_memory_utilization`: GPU memory fraction (default 0.9)
+- `tensor_parallel_size`: Number of GPUs for tensor parallelism (default 1)
+- `max_model_len`: Maximum sequence length (defaults to max_tokens)
+
+**Memory Management:**
+- Model loads immediately in `__init__` (not lazy)
+- Call `prm.cleanup()` to free GPU memory when done
+- Destructor (`__del__`) provides safety net but manual cleanup is recommended
+
+**Example with Cleanup:**
+```python
+prm = load_prm_server(config)
+try:
+    rewards = prm.score(prompt, response)
+    # Process rewards...
+finally:
+    prm.cleanup()
 ```

@@ -4,18 +4,29 @@
 Example usage of the unified PRM server architecture.
 
 This script demonstrates how to use the PrmServer classes with both
-Qwen and Skywork PRM models, supporting both single and batch scoring.
+Qwen and Skywork PRM models, supporting both single and batch scoring
+in either server mode or local mode.
 
 Usage:
-    # For Qwen PRM (start server first):
+    # Server mode (requires vLLM server running):
+    # For Qwen PRM:
     # Terminal 1: vllm serve Qwen/Qwen2.5-Math-PRM-7B --port 8080 --trust-remote-code
     # Terminal 2 (single): python example_prm_usage.py --model qwen
     # Terminal 2 (batch):  python example_prm_usage.py --model qwen --batch
 
-    # For Skywork PRM (start server first):
+    # For Skywork PRM:
     # Terminal 1: python start_reward_server.py
     # Terminal 2 (single): python example_prm_usage.py --model skywork
     # Terminal 2 (batch):  python example_prm_usage.py --model skywork --batch
+
+    # Local mode (loads model directly into GPU, no server needed):
+    # For Qwen PRM:
+    python example_prm_usage.py --model qwen --local
+    python example_prm_usage.py --model qwen --local --batch
+
+    # For Skywork PRM:
+    python example_prm_usage.py --model skywork --local
+    python example_prm_usage.py --model skywork --local --batch
 """
 
 import argparse
@@ -98,6 +109,23 @@ def main():
         action="store_true",
         help="Run truncation demonstration with intentionally long input"
     )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Use local vLLM inference instead of server (requires GPU)"
+    )
+    parser.add_argument(
+        "--gpu-memory-utilization",
+        type=float,
+        default=0.9,
+        help="GPU memory utilization for local mode (default: 0.9)"
+    )
+    parser.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
+        help="Tensor parallel size for local mode (default: 1)"
+    )
     args = parser.parse_args()
 
     # Configure based on model selection
@@ -116,23 +144,39 @@ def main():
         print("SKYWORK PRM EXAMPLE")
         print("=" * 80)
 
-    # Create configuration
-    config = PrmConfig(
-        prm_path=model_name,
-        base_url=base_url,
-        timeout=300,
-        trust_remote_code=True,
-        max_tokens=args.max_tokens
-    )
+    # Create configuration based on mode
+    if args.local:
+        print("\n⚠️  Local mode: Loading model into GPU memory...")
+        config = PrmConfig(
+            prm_path=model_name,
+            use_local_mode=True,
+            max_tokens=args.max_tokens,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            tensor_parallel_size=args.tensor_parallel_size,
+        )
+    else:
+        config = PrmConfig(
+            prm_path=model_name,
+            base_url=base_url,
+            timeout=300,
+            trust_remote_code=True,
+            max_tokens=args.max_tokens
+        )
 
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Model: {config.prm_path}")
-    print(f"  Base URL: {config.base_url}")
-    print(f"  Timeout: {config.timeout}s")
+    if args.local:
+        print("  Mode: Local (GPU)")
+        print(f"  GPU memory utilization: {config.gpu_memory_utilization}")
+        print(f"  Tensor parallel size: {config.tensor_parallel_size}")
+    else:
+        print("  Mode: Server")
+        print(f"  Base URL: {config.base_url}")
+        print(f"  Timeout: {config.timeout}s")
     print(f"  Max tokens: {config.max_tokens}")
 
     # Create PRM server instance
-    print(f"\nInitializing PRM server...")
+    print("\nInitializing PRM server...")
     prm = load_prm_server(config)
     print(f"  Model type: {prm.model_type}")
 
@@ -145,6 +189,12 @@ def main():
         run_batch_example(prm, prompt, response, args.model, base_url)
     else:
         run_single_example(prm, prompt, response, base_url)
+
+    # Cleanup for local mode
+    if args.local:
+        print("\nCleaning up GPU resources...")
+        prm.cleanup()
+        print("✓ Cleanup complete")
 
 
 def run_single_example(prm, prompt, response, base_url):
@@ -173,7 +223,7 @@ def run_single_example(prm, prompt, response, base_url):
         print("RESULTS")
         print("=" * 80)
         print(f"Number of steps: {len(rewards)}")
-        print(f"\nStep-wise rewards:")
+        print("\nStep-wise rewards:")
 
         for i, reward in enumerate(rewards, 1):
             print(f"  Step {i}: {reward:.6f}")
@@ -194,8 +244,8 @@ def run_single_example(prm, prompt, response, base_url):
         print(f"Failed to score response: {e}")
         print("\nTroubleshooting:")
         print(f"  1. Ensure the vLLM server is running at {base_url}")
-        print(f"  2. Check that the model is correctly loaded")
-        print(f"  3. Verify network connectivity")
+        print("  2. Check that the model is correctly loaded")
+        print("  3. Verify network connectivity")
 
 
 def run_batch_example(prm, example_prompt, example_response, model_type, base_url):
@@ -231,7 +281,7 @@ def run_batch_example(prm, example_prompt, example_response, model_type, base_ur
         ]
 
     print(f"Processing {len(prompts)} prompt-response pairs...")
-    print(f"Using single batch API call for efficiency\n")
+    print("Using single batch API call for efficiency\n")
 
     # Display all problems briefly
     for i, (prompt, response) in enumerate(zip(prompts, responses), 1):
@@ -293,9 +343,9 @@ def run_batch_example(prm, example_prompt, example_response, model_type, base_ur
         print(f"Failed to score batch: {e}")
         print("\nTroubleshooting:")
         print(f"  1. Ensure the vLLM server is running at {base_url}")
-        print(f"  2. Check that the model is correctly loaded")
-        print(f"  3. Verify network connectivity")
-        print(f"  4. Check server logs for batch processing errors")
+        print("  2. Check that the model is correctly loaded")
+        print("  3. Verify network connectivity")
+        print("  4. Check server logs for batch processing errors")
 
 
 def run_batch_truncation_demo(prm, example_prompt, model_type, model_name, base_url):
@@ -428,7 +478,7 @@ def run_batch_truncation_demo(prm, example_prompt, model_type, model_name, base_
         print("SUCCESS")
         print("=" * 80)
         print("Automatic truncation handled batch of long inputs successfully!")
-        print(f"Tail truncation kept the first steps that fit within 1024 tokens for each input.")
+        print("Tail truncation kept the first steps that fit within 1024 tokens for each input.")
         print(f"Network efficiency: 1 API call for {len(prompts)} truncated inputs")
 
     except Exception as e:
@@ -438,9 +488,9 @@ def run_batch_truncation_demo(prm, example_prompt, model_type, model_name, base_
         print(f"Failed to score batch: {e}")
         print("\nTroubleshooting:")
         print(f"  1. Ensure the vLLM server is running at {base_url}")
-        print(f"  2. Check that the model is correctly loaded")
-        print(f"  3. Verify network connectivity")
-        print(f"  4. Check server logs for batch processing errors")
+        print("  2. Check that the model is correctly loaded")
+        print("  3. Verify network connectivity")
+        print("  4. Check server logs for batch processing errors")
 
 
 def run_truncation_demo(prm, example_prompt, model_type, model_name, base_url):
@@ -494,11 +544,11 @@ def run_truncation_demo(prm, example_prompt, model_type, model_name, base_url):
         print(f"\n{'=' * 80}")
         print("TRUNCATION RESULTS")
         print("=" * 80)
-        print(f"Original input: 100 steps")
+        print("Original input: 100 steps")
         print(f"After truncation: {len(rewards)} steps (kept first {len(rewards)} steps)")
         print(f"Truncation ratio: {len(rewards)/100*100:.1f}% of original")
 
-        print(f"\nStep-wise rewards (truncated):")
+        print("\nStep-wise rewards (truncated):")
         for i, reward in enumerate(rewards[:10], 1):  # Show first 10
             print(f"  Step {i}: {reward:.6f}")
         if len(rewards) > 10:
@@ -520,8 +570,8 @@ def run_truncation_demo(prm, example_prompt, model_type, model_name, base_url):
         print(f"Failed to score response: {e}")
         print("\nTroubleshooting:")
         print(f"  1. Ensure the vLLM server is running at {base_url}")
-        print(f"  2. Check that the model is correctly loaded")
-        print(f"  3. Verify network connectivity")
+        print("  2. Check that the model is correctly loaded")
+        print("  3. Verify network connectivity")
 
 
 if __name__ == "__main__":

@@ -3,16 +3,23 @@
 """
 Unified PRM (Process Reward Model) Server Architecture
 
-Provides a server-based interface for evaluating step-by-step reasoning
+Provides both server-based and local inference for evaluating step-by-step reasoning
 with different PRM models (Qwen, Skywork, etc.).
 
 Usage:
     from prm_toolkit import PrmConfig, load_prm_server
 
-    # Create configuration
+    # Server mode (requires vLLM server running)
     config = PrmConfig(
         prm_path="Qwen/Qwen2.5-Math-PRM-7B",
         base_url="http://localhost:8080"
+    )
+
+    # Local mode (loads model directly into GPU)
+    config = PrmConfig(
+        prm_path="Qwen/Qwen2.5-Math-PRM-7B",
+        use_local_mode=True,
+        gpu_memory_utilization=0.7
     )
 
     # Create PRM server instance
@@ -23,6 +30,9 @@ Usage:
         prompt="What is 2+2?",
         response="Step 1: Add 2 and 2\n\nStep 2: The result is 4"
     )
+
+    # Cleanup GPU resources (local mode only)
+    prm.cleanup()
 """
 
 from abc import ABC, abstractmethod
@@ -38,11 +48,42 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PrmConfig:
     """Configuration for PRM server"""
-    prm_path: str                    # Model name/path
-    base_url: str                 # vLLM server URL (e.g., "http://localhost:8081")
-    timeout: int = 300            # Request timeout in seconds
+    prm_path: str                           # Model name/path
+    base_url: Optional[str] = None          # vLLM server URL (e.g., "http://localhost:8081") - optional if use_local_mode=True
+    timeout: int = 300                      # Request timeout in seconds
     trust_remote_code: bool = True
-    max_tokens: int = 4096        # Maximum token length for validation
+    max_tokens: int = 4096                  # Maximum token length for validation
+
+    # Local mode configuration
+    use_local_mode: bool = False            # Use local vLLM instance instead of HTTP server
+    gpu_memory_utilization: float = 0.9     # GPU memory utilization for local mode
+    tensor_parallel_size: int = 1           # Tensor parallel size for local mode
+    max_model_len: Optional[int] = None     # Max model length (defaults to max_tokens)
+
+    def __post_init__(self):
+        """Validate config after initialization"""
+        # Mode validation
+        if not self.base_url and not self.use_local_mode:
+            raise ValueError(
+                "Must specify either base_url (for server mode) or "
+                "use_local_mode=True (for local mode)"
+            )
+        if self.base_url and self.use_local_mode:
+            raise ValueError(
+                "Cannot use both base_url and use_local_mode=True. "
+                "Choose one mode."
+            )
+
+        # Set max_model_len default
+        if self.max_model_len is None:
+            self.max_model_len = self.max_tokens
+
+        # Local mode warnings
+        if self.use_local_mode:
+            logger.info(
+                f"Local mode enabled: will load {self.prm_path} "
+                f"with ~{self.gpu_memory_utilization*100:.0f}% GPU memory"
+            )
 
 
 class PrmServer(ABC):
@@ -50,7 +91,7 @@ class PrmServer(ABC):
 
     def __init__(self, config: PrmConfig):
         self.config = config
-        self.base_url = config.base_url
+        self.base_url = config.base_url  # For backward compatibility
 
         # Validate max_tokens
         if self.config.max_tokens <= 0:
@@ -61,6 +102,11 @@ class PrmServer(ABC):
         self.model_type = self.model_check()
         self._init_tokenizer()
 
+        # Initialize mode-specific resources
+        self.llm = None  # For local mode
+        if self.config.use_local_mode:
+            self._init_local_llm()  # Load immediately (not lazy)
+
     @abstractmethod
     def model_check(self) -> str:
         """Detect and return model type from config"""
@@ -69,6 +115,15 @@ class PrmServer(ABC):
     @abstractmethod
     def _init_tokenizer(self):
         """Initialize model-specific tokenizer"""
+        pass
+
+    @abstractmethod
+    def _init_local_llm(self):
+        """
+        Initialize vLLM LLM instance for local mode.
+        Called immediately in __init__ if use_local_mode=True.
+        Must be implemented by subclasses.
+        """
         pass
 
     @abstractmethod
@@ -105,14 +160,23 @@ class PrmServer(ABC):
 
     def send_request(self, processed_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Send request to vLLM server /pooling endpoint.
+        Execute inference (HTTP or local based on config).
+
+        Refactored to dispatch based on mode.
 
         Args:
             processed_data: Output from preprocess_input()
 
         Returns:
-            Raw server response (JSON)
+            Raw server response (JSON format, consistent across modes)
         """
+        if self.config.use_local_mode:
+            return self._send_local_request(processed_data)
+        else:
+            return self._send_http_request(processed_data)
+
+    def _send_http_request(self, processed_data: Dict[str, Any]) -> Dict[str, Any]:
+        """HTTP-based inference (existing logic, now refactored)"""
         try:
             response = requests.post(
                 f"{self.base_url}/pooling",
@@ -128,6 +192,34 @@ class PrmServer(ABC):
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"PRM server request failed: {e}")
 
+    def _send_local_request(self, processed_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Local vLLM inference using LLM.reward().
+
+        Converts processed_data into LLM.reward() call,
+        then converts PoolingRequestOutput back to HTTP-compatible format.
+        """
+        if self.llm is None:
+            raise RuntimeError("LLM not initialized for local mode")
+
+        input_data = processed_data["input"]
+
+        # Call LLM.reward() - accepts strings or token IDs
+        outputs = self.llm.reward(input_data)
+
+        # Convert PoolingRequestOutput to HTTP response format
+        # This ensures post_process_output() works unchanged
+        response_data = []
+        for output in outputs:
+            response_data.append({
+                "data": output.outputs.data
+            })
+
+        return {
+            "response": {"data": response_data},
+            "metadata": processed_data.get("metadata", {})
+        }
+
     @abstractmethod
     def post_process_output(self, raw_results: Dict[str, Any]) -> List[float]:
         """
@@ -141,6 +233,28 @@ class PrmServer(ABC):
         """
         pass
 
+
+    def cleanup(self):
+        """Release GPU resources (for local mode)"""
+        if self.llm is not None:
+            logger.info("Cleaning up local vLLM instance...")
+            del self.llm
+            self.llm = None
+            import gc
+            gc.collect()
+            try:
+                import torch
+                torch.cuda.empty_cache()
+                logger.info("GPU memory freed")
+            except ImportError:
+                pass
+
+    def __del__(self):
+        """Destructor: ensure cleanup"""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
 
     def score(self, prompt: str, response: str) -> List[float]:
         """
@@ -199,18 +313,29 @@ class PrmServer(ABC):
             all_inputs.extend(processed["input"])
             all_metadata.append(processed["metadata"])
 
-        # Single batch API call
-        try:
-            batch_response = requests.post(
-                f"{self.base_url}/pooling",
-                json={"input": all_inputs},
-                headers={"Content-Type": "application/json"},
-                timeout=self.config.timeout
-            )
-            batch_response.raise_for_status()
-            pooling_response = batch_response.json()
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"PRM server batch request failed: {e}")
+        # Single batch API call (dispatch based on mode)
+        if self.config.use_local_mode:
+            # Local mode: use LLM.reward()
+            if self.llm is None:
+                raise RuntimeError("LLM not initialized for local mode")
+
+            outputs = self.llm.reward(all_inputs)
+            pooling_response = {
+                "data": [{"data": output.outputs.data} for output in outputs]
+            }
+        else:
+            # Server mode: HTTP request
+            try:
+                batch_response = requests.post(
+                    f"{self.base_url}/pooling",
+                    json={"input": all_inputs},
+                    headers={"Content-Type": "application/json"},
+                    timeout=self.config.timeout
+                )
+                batch_response.raise_for_status()
+                pooling_response = batch_response.json()
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f"PRM server batch request failed: {e}")
 
         # Post-process each result separately
         batch_rewards = []
@@ -243,6 +368,21 @@ class QwenPrmServer(PrmServer):
             self.config.prm_path,
             trust_remote_code=self.config.trust_remote_code
         )
+
+    def _init_local_llm(self):
+        """Initialize vLLM for Qwen PRM (local mode)"""
+        from vllm import LLM
+
+        logger.info(f"Loading Qwen PRM locally: {self.config.prm_path}")
+        self.llm = LLM(
+            model=self.config.prm_path,
+            runner="pooling",  # CRITICAL for reward models
+            max_model_len=self.config.max_model_len,
+            trust_remote_code=self.config.trust_remote_code,
+            gpu_memory_utilization=self.config.gpu_memory_utilization,
+            tensor_parallel_size=self.config.tensor_parallel_size,
+        )
+        logger.info("Qwen PRM loaded successfully (local mode)")
 
     def validate_length(self, prompt: str, response: str) -> tuple[str, str]:
         """
@@ -352,6 +492,21 @@ class SkyworkPrmServer(PrmServer):
             self.config.prm_path,
             trust_remote_code=self.config.trust_remote_code
         )
+
+    def _init_local_llm(self):
+        """Initialize vLLM for Skywork PRM (local mode)"""
+        from vllm import LLM
+
+        logger.info(f"Loading Skywork PRM locally: {self.config.prm_path}")
+        self.llm = LLM(
+            model=self.config.prm_path,
+            runner="pooling",  # CRITICAL for reward models
+            max_model_len=self.config.max_model_len,
+            trust_remote_code=self.config.trust_remote_code,
+            gpu_memory_utilization=self.config.gpu_memory_utilization,
+            tensor_parallel_size=self.config.tensor_parallel_size,
+        )
+        logger.info("Skywork PRM loaded successfully (local mode)")
 
     def validate_length(self, prompt: str, response: str) -> tuple[str, str]:
         """
