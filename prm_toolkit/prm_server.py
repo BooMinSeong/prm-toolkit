@@ -96,8 +96,6 @@ class PrmServer(ABC):
         # Validate max_tokens
         if self.config.max_tokens <= 0:
             raise ValueError(f"max_tokens must be positive, got {self.config.max_tokens}")
-        if self.config.max_tokens < 128:
-            logger.warning(f"max_tokens={self.config.max_tokens} is very small and may truncate the prompt")
 
         self.model_type = self.model_check()
         self._init_tokenizer()
@@ -204,7 +202,15 @@ class PrmServer(ABC):
 
         input_data = processed_data["input"]
 
-        # Call LLM.reward() - accepts strings or token IDs
+        # Skywork: Convert token ID lists to vLLM-compatible dict format
+        # (required for local mode, server mode uses raw token IDs)
+        if self.model_type == "skywork-prm":
+            input_data = [
+                {"prompt_token_ids": ids, "multi_modal_data": None}
+                for ids in input_data
+            ]
+
+        # Call LLM.reward() - accepts strings, dicts, or token IDs
         outputs = self.llm.reward(input_data)
 
         # Convert PoolingRequestOutput to HTTP response format
@@ -319,7 +325,15 @@ class PrmServer(ABC):
             if self.llm is None:
                 raise RuntimeError("LLM not initialized for local mode")
 
-            outputs = self.llm.reward(all_inputs)
+            # Skywork: Convert token ID lists to vLLM-compatible dict format
+            batch_input_data = all_inputs
+            if self.model_type == "skywork-prm":
+                batch_input_data = [
+                    {"prompt_token_ids": ids, "multi_modal_data": None}
+                    for ids in all_inputs
+                ]
+
+            outputs = self.llm.reward(batch_input_data)
             pooling_response = {
                 "data": [{"data": output.outputs.data} for output in outputs]
             }
