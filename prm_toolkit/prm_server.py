@@ -431,7 +431,9 @@ class QwenPrmServer(PrmServer):
             response_section = truncated_text[start:].replace("<im_end>", "").replace("<|endoftext|>", "")
 
             # Convert <extra_0> back to double newlines
-            truncated_steps = [s.strip() for s in response_section.split("<extra_0>") if s.strip()]
+            # NOTE: Do NOT strip steps — strip changes subword boundaries,
+            # causing re-tokenization to produce different token counts
+            truncated_steps = [s for s in response_section.split("<extra_0>") if s]
             truncated_response = "\n\n".join(truncated_steps)
 
             logger.warning(f"Qwen: Token-level truncation {len(tokens)} → {self.config.max_tokens} tokens ({len(steps)} → {len(truncated_steps)} steps, last step may be incomplete)")
@@ -566,10 +568,12 @@ class SkyworkPrmServer(PrmServer):
         truncated_response_ids = response_ids[:tokens_available]
 
         # Decode truncated tokens back to text
+        # NOTE: Do NOT strip steps — strip changes subword boundaries,
+        # causing re-tokenization in preprocess_input to produce different token counts
         truncated_text = self.tokenizer.decode(truncated_response_ids, skip_special_tokens=False)
 
-        # Clean and reconstruct: split by step delimiter and filter empty steps
-        truncated_steps = [s.strip() for s in truncated_text.split(step_token) if s.strip()]
+        # Reconstruct: split by step delimiter, filter empty steps but preserve whitespace
+        truncated_steps = [s for s in truncated_text.split(step_token) if s]
         truncated_response = step_token.join(truncated_steps)
         if truncated_steps:
             truncated_response += step_token
