@@ -567,20 +567,15 @@ class SkyworkPrmServer(PrmServer):
         # Token-level truncation: cut at exact token boundary
         truncated_response_ids = response_ids[:tokens_available]
 
-        # Decode truncated tokens back to text
-        # NOTE: Do NOT strip steps — strip changes subword boundaries,
-        # causing re-tokenization in preprocess_input to produce different token counts
-        truncated_text = self.tokenizer.decode(truncated_response_ids, skip_special_tokens=False)
+        # Decode truncated tokens back to text and return directly.
+        # Do NOT split/rejoin/add trailing delimiter — any text modification
+        # risks changing token count when preprocess_input re-encodes.
+        truncated_response = self.tokenizer.decode(truncated_response_ids, skip_special_tokens=False)
 
-        # Reconstruct: split by step delimiter, filter empty steps but preserve whitespace
-        truncated_steps = [s for s in truncated_text.split(step_token) if s]
-        truncated_response = step_token.join(truncated_steps)
-        if truncated_steps:
-            truncated_response += step_token
-
+        truncated_step_count = len([s for s in truncated_response.split(step_token) if s])
         logger.warning(
             f"Skywork: Token-level truncation {total_tokens} → {len(prompt_ids) + len(truncated_response_ids)} tokens "
-            f"({len(steps)} original steps → {len(truncated_steps)} truncated steps, last step may be incomplete)"
+            f"({len(steps)} original steps → {truncated_step_count} truncated steps, last step may be incomplete)"
         )
 
         return prompt, truncated_response
