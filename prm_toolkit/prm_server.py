@@ -273,10 +273,7 @@ class PrmServer(ABC):
         Returns:
             List of normalized step-wise rewards
         """
-        # Validate and potentially truncate input
-        validated_prompt, validated_response = self.validate_length(prompt, response)
-
-        processed_data = self.preprocess_input(validated_prompt, validated_response)
+        processed_data = self.preprocess_input(prompt, response)
         raw_results = self.send_request(processed_data)
         rewards = self.post_process_output(raw_results)
         return rewards
@@ -309,13 +306,11 @@ class PrmServer(ABC):
         if len(prompts) == 0:
             return []
 
-        # Preprocess all inputs with validation
+        # Preprocess all inputs (truncation handled inside preprocess_input)
         all_inputs = []
         all_metadata = []
         for prompt, response in zip(prompts, responses):
-            # Validate length first
-            validated_prompt, validated_response = self.validate_length(prompt, response)
-            processed = self.preprocess_input(validated_prompt, validated_response)
+            processed = self.preprocess_input(prompt, response)
             all_inputs.extend(processed["input"])
             all_metadata.append(processed["metadata"])
 
@@ -526,62 +521,10 @@ class SkyworkPrmServer(PrmServer):
 
     def validate_length(self, prompt: str, response: str) -> tuple[str, str]:
         """
-        Validate and truncate input if it exceeds max_tokens.
-
-        Uses token-level truncation to maximize token utilization.
-        May result in incomplete final step if truncated mid-step.
+        No-op: truncation is now handled directly on token IDs inside preprocess_input()
+        to avoid decode/re-encode round-trip discrepancies.
         """
-        # Tokenize prompt (same as preprocess_input)
-        prompt_ids = self.tokenizer.encode(self.tokenizer.bos_token + prompt + "\n")
-
-        # Tokenize response step-by-step (same as preprocess_input)
-        step_token = "\n"
-        step_token_id = self.tokenizer.encode(step_token)[-1]
-
-        response_ids = []
-        steps = []
-
-        for step in response.split(step_token):
-            if step != "":
-                step_ids = self.tokenizer.encode(step)
-            else:
-                step_ids = []
-
-            step_ids += [step_token_id]
-            response_ids.extend(step_ids)
-            steps.append(step)
-
-        # Total token count (must match preprocess_input exactly)
-        total_tokens = len(prompt_ids) + len(response_ids)
-
-        if total_tokens <= self.config.max_tokens:
-            return prompt, response  # No truncation
-
-        # Tail truncation: remove tokens from the end (token-level, not step-level)
-        tokens_available = self.config.max_tokens - len(prompt_ids)
-
-        if tokens_available <= 0:
-            logger.error(f"Skywork: Prompt alone ({len(prompt_ids)} tokens) exceeds max_tokens={self.config.max_tokens}")
-            return prompt, ""
-
-        # Token-level truncation: cut at exact token boundary
-        truncated_response_ids = response_ids[:tokens_available]
-
-        # Decode truncated tokens back to text
-        truncated_text = self.tokenizer.decode(truncated_response_ids, skip_special_tokens=False)
-
-        # Clean and reconstruct: split by step delimiter and filter empty steps
-        truncated_steps = [s.strip() for s in truncated_text.split(step_token) if s.strip()]
-        truncated_response = step_token.join(truncated_steps)
-        if truncated_steps:
-            truncated_response += step_token
-
-        logger.warning(
-            f"Skywork: Token-level truncation {total_tokens} → {len(prompt_ids) + len(truncated_response_ids)} tokens "
-            f"({len(steps)} original steps → {len(truncated_steps)} truncated steps, last step may be incomplete)"
-        )
-
-        return prompt, truncated_response
+        return prompt, response
 
     def preprocess_input(self, prompt: str, response: str) -> Dict[str, Any]:
         """
@@ -619,6 +562,38 @@ class SkyworkPrmServer(PrmServer):
             steps.append(step_text)
 
         input_ids = prompt_ids + response_ids
+
+        # Hard truncation directly on token IDs (no text round-trip)
+        if len(input_ids) >= self.config.max_tokens:
+            original_total = len(input_ids)
+            # -1 safety margin to guarantee strict < max_tokens
+            max_response_len = self.config.max_tokens - len(prompt_ids) - 1
+
+            if max_response_len <= 0:
+                logger.error(
+                    f"Skywork: Prompt alone ({len(prompt_ids)} tokens) "
+                    f"exceeds max_tokens={self.config.max_tokens}"
+                )
+                response_ids = []
+            else:
+                response_ids = response_ids[:max_response_len]
+
+            input_ids = prompt_ids + response_ids
+            reward_flags = reward_flags[:len(input_ids)]
+
+            # Ensure last token has reward_flag=1 so at least one step gets scored
+            if reward_flags and reward_flags[-1] != 1:
+                reward_flags[-1] = 1
+
+            # Rebuild steps from truncated tokens (for metadata only, not re-tokenized)
+            truncated_text = self.tokenizer.decode(response_ids, skip_special_tokens=False)
+            step_token = "\n"
+            steps = [s + step_token for s in truncated_text.split(step_token) if s]
+
+            logger.warning(
+                f"Skywork: Truncated {original_total} → {len(input_ids)} tokens "
+                f"(max_tokens={self.config.max_tokens})"
+            )
 
         return {
             "input": [input_ids],
